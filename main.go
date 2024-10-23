@@ -29,6 +29,7 @@ var (
 		Name:        "cto_ksm_proxyfmu",
 		DisplayName: "cto_ksm_proxyfmu",
 		Description: "ЦТО КСМ - прокси-сервис для FMU - разрешительный режим",
+		UserName:    "NT AUTHORITY\\LocalService", // Добавляем эту строку
 	}
 )
 
@@ -59,7 +60,7 @@ func loadConfig() error {
 	}
 
 	// Попытка загрузить конфиг из файла
-	data, err := ioutil.ReadFile("config.json")
+	data, err := ioutil.ReadFile("ctoksmproxyfmu_config.json")
 	if err == nil {
 		err = json.Unmarshal(data, &config)
 		if err != nil {
@@ -74,7 +75,7 @@ func saveConfig() error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile("config.json", data, 0644)
+	return ioutil.WriteFile("ctoksmproxyfmu_config.json", data, 0644)
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
