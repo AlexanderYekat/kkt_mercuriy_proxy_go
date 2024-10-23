@@ -51,6 +51,23 @@ func (p *program) run() {
 	}
 }
 
+// Функция для получения пути к файлу конфигурации
+func getConfigPath() string {
+	// Получаем путь к Application Data
+	appData := os.Getenv("APPDATA")
+	if appData == "" {
+		// Для Windows XP путь может быть другим
+		appData = filepath.Join(os.Getenv("USERPROFILE"), "Application Data")
+	}
+
+	// Создаем директорию для нашего приложения, если её нет
+	appDir := filepath.Join(appData, "CTO_KSM", "ProxyFMU")
+	os.MkdirAll(appDir, 0755)
+
+	// Возвращаем полный путь к файлу конфигурации
+	return filepath.Join(appDir, "ctoksm_proxyfmu_config.json")
+}
+
 func loadConfig() error {
 	// Значения по умолчанию
 	config = Config{
@@ -60,7 +77,8 @@ func loadConfig() error {
 	}
 
 	// Попытка загрузить конфиг из файла
-	data, err := ioutil.ReadFile("ctoksmproxyfmu_config.json")
+	configPath := getConfigPath()
+	data, err := ioutil.ReadFile(configPath)
 	if err == nil {
 		err = json.Unmarshal(data, &config)
 		if err != nil {
@@ -75,7 +93,7 @@ func saveConfig() error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile("ctoksmproxyfmu_config.json", data, 0644)
+	return ioutil.WriteFile(getConfigPath(), data, 0644)
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
