@@ -22,9 +22,14 @@ type Config struct {
 }
 
 var (
-	logger service.Logger
-	config Config
-	mu     sync.RWMutex
+	logger    service.Logger
+	config    Config
+	mu        sync.RWMutex
+	svcConfig = &service.Config{
+		Name:        "cto_ksm_proxyfmu",
+		DisplayName: "cto_ksm_proxyfmu",
+		Description: "ЦТО КСМ - прокси-сервис для FMU - разрешительный режим",
+	}
 )
 
 type program struct{}
@@ -138,7 +143,20 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		w.WriteHeader(http.StatusOK)
+		// Перезапускаем службу
+		if service.Interactive() {
+			// Если запущено как приложение, сообщаем о необходимости ручного перезапуска
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("Settings saved. Please restart the application to apply changes."))
+		} else {
+			// Если запущено как служба, пытаемся перезапустить
+			s, err := service.New(&program{}, svcConfig)
+			if err == nil {
+				s.Restart()
+			}
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("Settings saved. Service will be restarted."))
+		}
 	}
 }
 
@@ -170,12 +188,6 @@ func runAsApplication() {
 func main() {
 	if err := loadConfig(); err != nil {
 		log.Printf("Ошибка загрузки конфига: %v", err)
-	}
-
-	svcConfig := &service.Config{
-		Name:        "ProxyService",
-		DisplayName: "Proxy Service",
-		Description: "Прокси-сервис для перенаправления запросов",
 	}
 
 	prg := &program{}

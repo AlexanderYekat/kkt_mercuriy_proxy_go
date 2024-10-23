@@ -1,8 +1,8 @@
 ; Installation script for proxy service
-#define MyAppName "proxy_fmu"
-#define MyAppVersion "2.0"
+#define MyAppName "cto_ksm_proxyfmu"
+#define MyAppVersion "3.0"
 #define MyAppPublisher "CTO KSM"
-#define MyAppExeName "proxy_fmu.exe"
+#define MyAppExeName "cto_ksm_proxyfmu.exe"
 
 [Setup]
 ; Unique application identifier for Windows
@@ -14,7 +14,7 @@ DefaultDirName={pf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=output
-OutputBaseFilename=proxy_service_setup
+OutputBaseFilename=cto_ksm_proxyfmu_setup
 Compression=lzma
 SolidCompression=yes
 ; Administrator rights required for service installation
@@ -27,7 +27,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 ; Copy main executable file
-Source: "proxy_fmu.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "cto_ksm_proxyfmu.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Copy static folder with all contents
 Source: "static\*"; DestDir: "{app}\static"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Create URL shortcut file
