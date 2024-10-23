@@ -31,11 +31,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 ; Copy main executable file
-Source: "cto_ksm_proxyfmu.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "for_build\proxy\cto_ksm_proxyfmu.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Copy static folder with all contents
 Source: "static\*"; DestDir: "{app}\static"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Create URL shortcut file
-Source: "settings.url"; DestDir: "{app}"; Flags: ignoreversion
+Source: "for_build\proxy\settings.url"; DestDir: "{app}"; Flags: ignoreversion
 Source: "static\logo.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "static\logo.ico"; DestDir: "{app}"; Flags: ignoreversion
 
