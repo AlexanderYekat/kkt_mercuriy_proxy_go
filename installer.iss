@@ -42,9 +42,9 @@ Source: "static\logo.ico"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 ; Create Start Menu shortcuts
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\logo.ico"
-Name: "{group}\Настройки {#MyAppName}"; Filename: "http://localhost:2579"; IconFilename: "{app}\logo.ico"
-Name: "{group}\Сайт ЦТО КСМ"; Filename: "https://cto-ksm.ru"; IconFilename: "{app}\logo.ico"
-Name: "{commondesktop}\Настройки {#MyAppName}"; Filename: "http://localhost:2579"; IconFilename: "{app}\logo.ico"
+Name: "{group}\Settings {#MyAppName}"; Filename: "http://localhost:2579"; IconFilename: "{app}\logo.ico"
+;Name: "{group}\site CTO KSM"; Filename: "https://cto-ksm.ru"; IconFilename: "{app}\logo.ico"
+Name: "{commondesktop}\Settings {#MyAppName}"; Filename: "http://localhost:2579"; IconFilename: "{app}\logo.ico"
 
 [Run]
 ; Install and start service after installation
