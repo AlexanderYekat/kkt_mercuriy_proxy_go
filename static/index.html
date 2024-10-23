@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Proxy FMU Settings</title>
+    <title>ЦТО КСМ - Настройки прокси-сервиса</title>
     <meta charset="UTF-8">
     <style>
         body {
@@ -59,10 +59,37 @@
             border: 1px solid #ffeeba;
             font-weight: bold;
         }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo {
+            max-width: 200px;
+            margin-bottom: 10px;
+        }
+        .company-info {
+            margin-top: 20px;
+            text-align: center;
+            color: #666;
+            padding: 20px;
+            border-top: 1px solid #eee;
+        }
+        .company-info a {
+            color: #4CAF50;
+            text-decoration: none;
+        }
+        .company-info a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
-    <h1>Настройки прокси-сервиса для FMU (разрешительный режим)</h1>
+    <div class="header">
+        <a href="https://cto-ksm.ru" target="_blank">
+            <img src="logo.png" alt="ЦТО КСМ" class="logo">
+        </a>
+        <h1>Настройки прокси-сервиса для FMU (разрешительный режим)</h1>
+    </div>
     <div class="settings-form">
         <div class="form-group">
             <label for="sourcePort">Порт для 1cv77:</label>
@@ -78,6 +105,11 @@
         </div>
         <button onclick="saveSettings()">Сохранить настройки</button>
         <div id="status" class="status" style="display: none;"></div>
+    </div>
+
+    <div class="company-info">
+        <p>© 2024 ЦТО КСМ - Центр технического обслуживания контрольно-слежящей механики</p>
+        <p>Посетите наш сайт: <a href="https://cto-ksm.ru" target="_blank">cto-ksm.ru</a></p>
     </div>
 
     <script>
