@@ -1,21 +1,35 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sync"
 
 	"github.com/kardianos/service"
 )
 
-var logger service.Logger
+// Config структура для хранения настроек
+type Config struct {
+	SourcePort int    `json:"sourcePort"`
+	TargetPort int    `json:"targetPort"`
+	TargetHost string `json:"targetHost"`
+}
+
+var (
+	logger service.Logger
+	config Config
+	mu     sync.RWMutex
+)
 
 type program struct{}
 
 func (p *program) Start(s service.Service) error {
-	// Используем отдельную goroutine для запуска сервера
 	go p.run()
 	return nil
 }
@@ -25,32 +39,62 @@ func (p *program) Stop(s service.Service) error {
 }
 
 func (p *program) run() {
-	// Настраиваем обработчик
-	http.HandleFunc("/document", handleRequest)
-	logger.Info("Сервер запущен на порту 2579")
-	if err := http.ListenAndServe(":2579", nil); err != nil {
+	setupRoutes()
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", config.SourcePort), nil); err != nil {
 		logger.Error(err)
 	}
 }
 
+func loadConfig() error {
+	// Значения по умолчанию
+	config = Config{
+		SourcePort: 2579,
+		TargetPort: 2578,
+		TargetHost: "localhost",
+	}
+
+	// Попытка загрузить конфиг из файла
+	data, err := ioutil.ReadFile("config.json")
+	if err == nil {
+		err = json.Unmarshal(data, &config)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func saveConfig() error {
+	data, err := json.MarshalIndent(config, "", "    ")
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile("config.json", data, 0644)
+}
+
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" { // В Go 1.10 лучше использовать строковые константы
+	if r.Method != http.MethodPost {
 		http.Error(w, "Метод не разрешен", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Создаем новый запрос
-	proxyReq, err := http.NewRequest("POST", "http://localhost:2578/document", r.Body)
+	mu.RLock()
+	targetURL := fmt.Sprintf("http://%s:%d/document", config.TargetHost, config.TargetPort)
+	mu.RUnlock()
+
+	proxyReq, err := http.NewRequest(http.MethodPost, targetURL, r.Body)
 	if err != nil {
 		http.Error(w, "Ошибка при создании запроса", http.StatusInternalServerError)
 		return
 	}
 
-	// Копируем заголовки
-	copyHeader(proxyReq.Header, r.Header)
+	for name, values := range r.Header {
+		for _, value := range values {
+			proxyReq.Header.Add(name, value)
+		}
+	}
 	proxyReq.Header.Set("Content-Type", "application/json")
 
-	// Выполняем запрос
 	client := &http.Client{}
 	resp, err := client.Do(proxyReq)
 	if err != nil {
@@ -59,26 +103,75 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Копируем заголовки ответа
-	copyHeader(w.Header(), resp.Header)
+	for name, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
+	}
 	w.WriteHeader(resp.StatusCode)
 
-	// Копируем тело ответа
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		logger.Error(err)
 	}
 }
 
-// Вспомогательная функция для копирования заголовков
-func copyHeader(dst, src http.Header) {
-	for k, vv := range src {
-		for _, v := range vv {
-			dst.Add(k, v)
+func handleSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		mu.RLock()
+		json.NewEncoder(w).Encode(config)
+		mu.RUnlock()
+
+	case http.MethodPost:
+		var newConfig Config
+		if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
+
+		mu.Lock()
+		config = newConfig
+		mu.Unlock()
+
+		if err := saveConfig(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func setupRoutes() {
+	// Setup API routes
+	http.HandleFunc("/document", handleRequest)
+	http.HandleFunc("/api/settings", handleSettings)
+
+	// Setup static files using regular file server
+	staticDir := "./static"
+	if _, err := os.Stat(staticDir); os.IsNotExist(err) {
+		// If running as service, try to find static directory relative to executable
+		exe, err := os.Executable()
+		if err == nil {
+			staticDir = filepath.Join(filepath.Dir(exe), "static")
+		}
+	}
+	http.Handle("/", http.FileServer(http.Dir(staticDir)))
+}
+
+func runAsApplication() {
+	fmt.Printf("Запуск в режиме приложения на http://localhost:%d\n", config.SourcePort)
+	setupRoutes()
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", config.SourcePort), nil); err != nil {
+		log.Fatal(err)
 	}
 }
 
 func main() {
+	if err := loadConfig(); err != nil {
+		log.Printf("Ошибка загрузки конфига: %v", err)
+	}
+
 	svcConfig := &service.Config{
 		Name:        "ProxyService",
 		DisplayName: "Proxy Service",
@@ -96,50 +189,44 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Обработка аргументов командной строки
 	if len(os.Args) > 1 {
-		err = handleCommand(s, os.Args[1])
-		if err != nil {
-			log.Fatal(err)
+		switch os.Args[1] {
+		case "install":
+			err = s.Install()
+			if err != nil {
+				log.Fatal("Не удалось установить службу: ", err)
+			}
+			fmt.Println("Служба успешно установлена")
+			return
+		case "uninstall":
+			err = s.Uninstall()
+			if err != nil {
+				log.Fatal("Не удалось удалить службу: ", err)
+			}
+			fmt.Println("Служба успешно удалена")
+			return
+		case "start":
+			err = s.Start()
+			if err != nil {
+				log.Fatal("Не удалось запустить службу: ", err)
+			}
+			fmt.Println("Служба запущена")
+			return
+		case "stop":
+			err = s.Stop()
+			if err != nil {
+				log.Fatal("Не удалось остановить службу: ", err)
+			}
+			fmt.Println("Служба остановлена")
+			return
+		case "run":
+			runAsApplication()
+			return
 		}
-		return
 	}
 
-	// Запускаем службу
-	if err = s.Run(); err != nil {
+	err = s.Run()
+	if err != nil {
 		logger.Error(err)
 	}
-}
-
-// Вспомогательная функция для обработки команд
-func handleCommand(s service.Service, cmd string) error {
-	switch cmd {
-	case "install":
-		err := s.Install()
-		if err != nil {
-			return fmt.Errorf("Не удалось установить службу: %v", err)
-		}
-		fmt.Println("Служба успешно установлена")
-	case "uninstall":
-		err := s.Uninstall()
-		if err != nil {
-			return fmt.Errorf("Не удалось удалить службу: %v", err)
-		}
-		fmt.Println("Служба успешно удалена")
-	case "start":
-		err := s.Start()
-		if err != nil {
-			return fmt.Errorf("Не удалось запустить службу: %v", err)
-		}
-		fmt.Println("Служба запущена")
-	case "stop":
-		err := s.Stop()
-		if err != nil {
-			return fmt.Errorf("Не удалось остановить службу: %v", err)
-		}
-		fmt.Println("Служба остановлена")
-	default:
-		return fmt.Errorf("Неизвестная команда: %s", cmd)
-	}
-	return nil
 }

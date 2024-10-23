@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Proxy FMU Settings</title>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        .settings-form {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background: #dff0d8;
+            color: #3c763d;
+        }
+        .error {
+            background: #f2dede;
+            color: #a94442;
+        }
+    </style>
+</head>
+<body>
+    <h1>Proxy FMU Settings</h1>
+    <div class="settings-form">
+        <div class="form-group">
+            <label for="sourcePort">Source Port:</label>
+            <input type="number" id="sourcePort" value="2579">
+        </div>
+        <div class="form-group">
+            <label for="targetPort">Target Port:</label>
+            <input type="number" id="targetPort" value="2578">
+        </div>
+        <div class="form-group">
+            <label for="targetHost">Target Host:</label>
+            <input type="text" id="targetHost" value="localhost">
+        </div>
+        <button onclick="saveSettings()">Save Settings</button>
+        <div id="status" class="status" style="display: none;"></div>
+    </div>
+
+    <script>
+        function showStatus(message, isError = false) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.style.display = 'block';
+            status.className = 'status ' + (isError ? 'error' : 'success');
+        }
+
+        async function loadSettings() {
+            try {
+                const response = await fetch('/api/settings');
+                const settings = await response.json();
+                document.getElementById('sourcePort').value = settings.sourcePort;
+                document.getElementById('targetPort').value = settings.targetPort;
+                document.getElementById('targetHost').value = settings.targetHost;
+            } catch (error) {
+                showStatus('Failed to load settings: ' + error.message, true);
+            }
+        }
+
+        async function saveSettings() {
+            const settings = {
+                sourcePort: parseInt(document.getElementById('sourcePort').value),
+                targetPort: parseInt(document.getElementById('targetPort').value),
+                targetHost: document.getElementById('targetHost').value
+            };
+
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(settings)
+                });
+
+                if (response.ok) {
+                    showStatus('Settings saved successfully!');
+                } else {
+                    showStatus('Failed to save settings', true);
+                }
+            } catch (error) {
+                showStatus('Error: ' + error.message, true);
+            }
+        }
+
+        // Load settings when page loads
+        loadSettings();
+    </script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 ; Installation script for proxy service
 #define MyAppName "proxy_fmu"
-#define MyAppVersion "1.0"
+#define MyAppVersion "2.0"
 #define MyAppPublisher "CTO KSM"
 #define MyAppExeName "proxy_fmu.exe"
 
@@ -28,15 +28,23 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 ; Copy main executable file
 Source: "proxy_fmu.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Copy static folder with all contents
+Source: "static\*"; DestDir: "{app}\static"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Create URL shortcut file
+Source: "settings.url"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-; Create Start Menu shortcut
+; Create Start Menu shortcuts
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\Settings Page"; Filename: "http://localhost:2579"
+Name: "{commondesktop}\{#MyAppName} Settings"; Filename: "http://localhost:2579"
 
 [Run]
 ; Install and start service after installation
 Filename: "{app}\{#MyAppExeName}"; Parameters: "install"; Flags: runhidden waituntilterminated; StatusMsg: "Installing service..."
 Filename: "{app}\{#MyAppExeName}"; Parameters: "start"; Flags: runhidden waituntilterminated; StatusMsg: "Starting service..."
+; Open settings page after installation
+Filename: "{sys}\cmd.exe"; Parameters: "/c start http://localhost:2579"; Flags: nowait postinstall skipifsilent; Description: "Open settings page"
 
 [UninstallRun]
 ; Stop and remove service during uninstallation
