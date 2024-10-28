@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/kardianos/service"
+	// Добавляем этот импорт
 )
 
 // Config структура для хранения настроек
@@ -26,12 +27,11 @@ var (
 	config    Config
 	mu        sync.RWMutex
 	svcConfig = &service.Config{
-		Name:        "cto_ksm_proxyfmu",
-		DisplayName: "cto_ksm_proxyfmu",
-		Description: "ЦТО КСМ - прокси-сервис для FMU - разрешительный режим",
-		UserName:    "LocalSystem",
-		// Исправляем Type на ServiceType
-		//ServiceType: service.WindowsService,
+		Name:         "cto_ksm_proxyfmu",
+		DisplayName:  "cto_ksm_proxyfmu",
+		Description:  "ЦТО КСМ - прокси-сервис для FMU - разрешительный режим",
+		UserName:     "LocalSystem",                 // Используем LocalSystem для полного доступа
+		Dependencies: []string{"Tcpip", "Dnscache"}, // Добавляем зависимости от сетевых служб
 		Option: service.KeyValue{
 			"StartTimeout": "120",
 		},
