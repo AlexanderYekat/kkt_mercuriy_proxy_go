@@ -29,25 +29,61 @@ var (
 		Name:        "cto_ksm_proxyfmu",
 		DisplayName: "cto_ksm_proxyfmu",
 		Description: "ЦТО КСМ - прокси-сервис для FMU - разрешительный режим",
-		UserName:    "NT AUTHORITY\\LocalService", // Добавляем эту строку
+		UserName:    "LocalSystem",
+		// Исправляем Type на ServiceType
+		//ServiceType: service.WindowsService,
+		Option: service.KeyValue{
+			"StartTimeout": "120",
+		},
 	}
 )
 
 type program struct{}
 
 func (p *program) Start(s service.Service) error {
-	go p.run()
+	// Создаем канал для graceful shutdown
+	stop := make(chan struct{})
+	go func() {
+		p.run()
+		close(stop)
+	}()
+
+	// Логируем успешный запуск
+	if logger != nil {
+		logger.Info("Служба успешно запущена")
+	}
 	return nil
 }
 
 func (p *program) Stop(s service.Service) error {
+	// Логируем остановку
+	if logger != nil {
+		logger.Info("Служба останавливается...")
+	}
+	// Здесь можно добавить cleanup код если необходимо
 	return nil
 }
 
 func (p *program) run() {
+	if logger != nil {
+		logger.Info("Инициализация службы...")
+	}
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%d", config.SourcePort),
+		Handler: nil, // использует DefaultServeMux
+	}
+
 	setupRoutes()
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", config.SourcePort), nil); err != nil {
-		logger.Error(err)
+
+	if logger != nil {
+		logger.Infof("Сервер запущен на порту %d", config.SourcePort)
+	}
+
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if logger != nil {
+			logger.Error(err)
+		}
 	}
 }
 
@@ -69,14 +105,14 @@ func getConfigPath() string {
 }
 
 func loadConfig() error {
-	// Значения по умолчанию
+	// Значения по умолчани
 	config = Config{
 		SourcePort: 2579,
 		TargetPort: 2578,
 		TargetHost: "localhost",
 	}
 
-	// Попытка загрузить конфиг из файла
+	// Попытка загруить конфиг из файла
 	configPath := getConfigPath()
 	data, err := ioutil.ReadFile(configPath)
 	if err == nil {
@@ -168,7 +204,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte("Settings saved. Please restart the application to apply changes."))
 		} else {
-			// Если запущено как служба, пытаемся перезапустить
+			// Ели запущено как служба, пытаемся перезапустить
 			s, err := service.New(&program{}, svcConfig)
 			if err == nil {
 				s.Restart()
@@ -212,13 +248,16 @@ func main() {
 	prg := &program{}
 	s, err := service.New(prg, svcConfig)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Ошибка создания службы: ", err)
 	}
 
 	logger, err = s.Logger(nil)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Ошибка создания логгера: ", err)
 	}
+
+	// Добавляем логирование при запуске
+	logger.Info("Инициализация службы...")
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -227,7 +266,7 @@ func main() {
 			if err != nil {
 				log.Fatal("Не удалось установить службу: ", err)
 			}
-			fmt.Println("Служба успешно установлена")
+			fmt.Println("Служба успено установлена")
 			return
 		case "uninstall":
 			err = s.Uninstall()

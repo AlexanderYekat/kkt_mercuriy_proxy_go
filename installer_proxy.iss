@@ -1,6 +1,6 @@
 ; Installation script for proxy service
 #define MyAppName "cto_ksm_proxyfmu"
-#define MyAppVersion "3.0"
+#define MyAppVersion "4.0"
 #define MyAppPublisher "CTO KSM"
 #define MyAppExeName "cto_ksm_proxyfmu.exe"
 
@@ -13,7 +13,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL=https://cto-ksm.ru
 AppSupportURL=https://cto-ksm.ru
 AppUpdatesURL=https://cto-ksm.ru
-DefaultDirName={pf}\CTO_KSM\{#MyAppName}
+DefaultDirName={autopf}\CTO_KSM\{#MyAppName}
 DefaultGroupName=CTO KSM\{#MyAppName}
 SetupIconFile=static\logo.ico
 UninstallDisplayIcon={app}\logo.ico
@@ -24,7 +24,7 @@ SolidCompression=yes
 ; Administrator rights required for service installation
 PrivilegesRequired=admin
 ; Minimum supported Windows version
-MinVersion=5.1
+MinVersion=6.1sp1
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -55,8 +55,8 @@ Filename: "{sys}\cmd.exe"; Parameters: "/c start http://localhost:2579"; Flags: 
 
 [UninstallRun]
 ; Stop and remove service during uninstallation
-Filename: "{app}\{#MyAppExeName}"; Parameters: "stop"; Flags: runhidden waituntilterminated
-Filename: "{app}\{#MyAppExeName}"; Parameters: "uninstall"; Flags: runhidden waituntilterminated
+Filename: "{app}\{#MyAppExeName}"; Parameters: "stop"; Flags: runhidden waituntilterminated; RunOnceId: "StopService"
+Filename: "{app}\{#MyAppExeName}"; Parameters: "uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallService"
 
 [Code]
 // Function to check if service is running before uninstallation

@@ -1,6 +1,6 @@
 module proxygofmu
 
-go 1.23.1
+go 1.21.4
 
 require github.com/kardianos/service v1.2.2
 
