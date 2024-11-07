@@ -1,8 +1,8 @@
 ; Installation script for proxy service
-#define MyAppName "cto_ksm_proxyfmu"
-#define MyAppVersion "4.0"
+#define MyAppName "cto_ksm_mercury"
+#define MyAppVersion "6.0"
 #define MyAppPublisher "CTO KSM"
-#define MyAppExeName "cto_ksm_proxyfmu.exe"
+#define MyAppExeName "cto_ksm_mercury.exe"
 
 [Setup]
 ; Unique application identifier for Windows
@@ -18,7 +18,7 @@ DefaultGroupName=CTO KSM\{#MyAppName}
 SetupIconFile=static\logo.ico
 UninstallDisplayIcon={app}\logo.ico
 OutputDir=output
-OutputBaseFilename=cto_ksm_proxyfmu_setup
+OutputBaseFilename=cto_ksm_cto_mercury_setup
 Compression=lzma
 SolidCompression=yes
 ; Administrator rights required for service installation
@@ -31,7 +31,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 ; Copy main executable file
-Source: "for_build\proxy\cto_ksm_proxyfmu.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "for_build\proxy\cto_ksm_mercury.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Copy static folder with all contents
 Source: "static\*"; DestDir: "{app}\static"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Create URL shortcut file

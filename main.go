@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
+	"time"
 
 	"github.com/kardianos/service"
 	// Добавляем этот импорт
@@ -43,6 +45,7 @@ var (
 			"StartTimeout": "120",
 		},
 	}
+	fileLogger *log.Logger
 )
 
 type program struct{}
@@ -298,7 +301,53 @@ func runAsApplication() {
 	}
 }
 
+func initFileLogger() error {
+	appData := os.Getenv("APPDATA")
+	if appData == "" {
+		appData = filepath.Join(os.Getenv("USERPROFILE"), "Application Data")
+	}
+
+	logDir := filepath.Join(appData, "CTO_KSM", "ProxyFMU", "logs")
+	os.MkdirAll(logDir, 0755)
+
+	currentTime := time.Now().Format("2006-01-02")
+	logPath := filepath.Join(logDir, "service_"+currentTime+".log")
+
+	// Выводим путь к файлу логов
+	fmt.Printf("Путь к файлу логов: %s\n", logPath)
+
+	logFile, err := os.OpenFile(
+		logPath,
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
+		0644,
+	)
+	if err != nil {
+		return err
+	}
+
+	fileLogger = log.New(logFile, "", log.LstdFlags)
+	return nil
+}
+
 func main() {
+	fmt.Println("Начинаем инициализацию файла логов...")
+	if err := initFileLogger(); err != nil {
+		fmt.Printf("Ошибка инициализации файла логов: %v\n", err)
+	}
+
+	if runtime.GOOS == "windows" {
+		// Установить совместимость с Windows 7
+		os.Setenv("GODEBUG", "netdns=go")
+	}
+
+	if !service.Interactive() {
+		isAdmin, err := isUserAdmin()
+		if err != nil || !isAdmin {
+			log.Fatal("Программа должна быть запущена с правами администратора")
+			return
+		}
+	}
+
 	if err := loadConfig(); err != nil {
 		log.Printf("Ошибка загрузки конфига: %v", err)
 	}
@@ -320,11 +369,18 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "install":
+			fmt.Println("Начинаем установку службы...")
+			fileLogger.Println("Начинаем установку службы...")
 			err = s.Install()
 			if err != nil {
-				log.Fatal("Не удалось установить службу: ", err)
+				errMsg := fmt.Sprintf("Ошибка установки службы: %v", err)
+				fmt.Println(errMsg)
+				fileLogger.Println(errMsg)
+				logger.Error(errMsg)
+				log.Fatal(err)
 			}
-			fmt.Println("Служба успено установлена")
+			fmt.Println("Служба успешно установлена")
+			fileLogger.Println("Служба успешно установлена")
 			return
 		case "uninstall":
 			err = s.Uninstall()
@@ -334,18 +390,30 @@ func main() {
 			fmt.Println("Служба успешно удалена")
 			return
 		case "start":
+			fmt.Println("Начинаем запуск службы...")
+			fileLogger.Println("Начинаем запуск службы...")
 			err = s.Start()
 			if err != nil {
-				log.Fatal("Не удалось запустить службу: ", err)
+				errMsg := fmt.Sprintf("Ошибка запуска службы: %v", err)
+				fmt.Println(errMsg)
+				fileLogger.Println(errMsg)
+				log.Fatal(err)
 			}
-			fmt.Println("Служба запущена")
+			fmt.Println("Служба успешно запущена")
+			fileLogger.Println("Служба успешно запущена")
 			return
 		case "stop":
+			fmt.Println("Начинаем остановку службы...")
+			fileLogger.Println("Начинаем остановку службы...")
 			err = s.Stop()
 			if err != nil {
-				log.Fatal("Не удалось остановить службу: ", err)
+				errMsg := fmt.Sprintf("Ошибка остановки службы: %v", err)
+				fmt.Println(errMsg)
+				fileLogger.Println(errMsg)
+				log.Fatal(err)
 			}
-			fmt.Println("Служба остановлена")
+			fmt.Println("Служба успешно остановлена")
+			fileLogger.Println("Служба успешно остановлена")
 			return
 		case "run":
 			runAsApplication()
@@ -357,4 +425,13 @@ func main() {
 	if err != nil {
 		logger.Error(err)
 	}
+}
+
+func isUserAdmin() (bool, error) {
+	fmt.Println("Проверяем права администратора...")
+	_, err := os.Open("\\\\.\\PHYSICALDRIVE0")
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
