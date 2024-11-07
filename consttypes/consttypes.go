@@ -11,6 +11,7 @@ type TItem struct {
 }
 
 type TDocument struct {
+	IsTest       bool    `json:"isTest,omitempty"`
 	IsReturn     bool    `json:"isReturn,omitempty"`
 	Items        []TItem `json:"items"` // Позиции документа
 	TaxationType string  `json:"taxationType"`

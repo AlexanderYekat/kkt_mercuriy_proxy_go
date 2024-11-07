@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"cto_ksm_mercury/consttypes"
 	merc "cto_ksm_mercury/sendtcp"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/kardianos/service"
 )
@@ -31,6 +33,7 @@ type Config struct {
 var (
 	config    Config
 	mu        sync.RWMutex
+	logger    *log.Logger
 	svcConfig = &service.Config{
 		Name:        "cto_ksm_mercury",
 		DisplayName: "cto_ksm_mercury",
@@ -54,6 +57,14 @@ type program struct{}
 
 func (p *program) Start(s service.Service) error {
 	// Создаем канал для graceful shutdown
+
+	if err := initLogger(); err != nil {
+		errMsg := fmt.Sprintf("Ошибка инициализации логгера: %v", err)
+		ioutil.WriteFile(getLogPath()+"/service_start.log", []byte(errMsg), 0644)
+		//log.Fatal("Ошибка инициализации логгера:", err)
+		//fmt.Println("Ошибка инициализации логгера:", err)
+	}
+
 	stop := make(chan struct{})
 	go func() {
 		p.run()
@@ -91,6 +102,19 @@ func getConfigPath() string {
 	return filepath.Join(appDir, "ctoksm_proxyfmu_config.json")
 }
 
+// Функция для получения пути к файлу конфигурации
+func getLogPath() string {
+	fmt.Println("Получаем путь к Application Data...")
+	// Используем ProgramData вместо APPDATA
+	//programData := os.Getenv("ProgramData")
+	userDir, _ := os.UserHomeDir()
+	programData := filepath.Join(userDir, "AppData", "Local")
+	appDir := filepath.Join(programData, "cto_ksm_mercury")
+	os.MkdirAll(appDir, 0755)
+	//return filepath.Join(appDir, "service.log")
+	return filepath.Join(appDir)
+}
+
 func loadConfig() error {
 	config = Config{
 		SourcePort:               2579,
@@ -125,18 +149,61 @@ func saveConfig() (string, error) {
 	return getConfigPath(), ioutil.WriteFile(getConfigPath(), data, 0644)
 }
 
+func initLogger() error {
+	logDir := getLogPath()
+	// Создаем директорию, если она не существует
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("ошибка создания директории для логов: %v", err)
+	}
+	logPath := filepath.Join(logDir, "service.log")
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("ошибка открытия файла лога: %v", err)
+	}
+
+	logger = log.New(logFile, "", log.Ldate|log.Ltime|log.Lshortfile)
+	return nil
+}
+
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("Обрабатываем запрос...")
+	if logger != nil {
+		logger.Printf("Получен новый запрос: %s %s", r.Method, r.URL.Path)
+	}
+
 	if r.Method != http.MethodPost {
+		if logger != nil {
+			logger.Printf("Метод не разрешен: %s", r.Method)
+		}
+		if logger != nil {
+			logger.Printf("Метод не разрешен: %s", r.Method)
+		}
 		http.Error(w, "Метод не разрешен", http.StatusMethodNotAllowed)
 		return
 	}
 
 	// Читаем тело запроса
 	var doc consttypes.TDocument
-	if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
+	var bodyBytes []byte
+	bodyBytes, _ = ioutil.ReadAll(r.Body)
+	if logger != nil {
+		logger.Printf("Тело запроса: %s", bodyBytes)
+	}
+	// Очищаем от специальных символов
+	cleanBody := bytes.Trim(bodyBytes, "\xef\xbb\xbf\x00\x1f") // Удаляем BOM и другие спецсимволы
+	if logger != nil {
+		logger.Printf("Очищенное тело запроса: %s", cleanBody)
+	}
+
+	if err := json.NewDecoder(bytes.NewReader(cleanBody)).Decode(&doc); err != nil {
+		if logger != nil {
+			logger.Printf("Ошибка разбора JSON: %v", err)
+		}
 		http.Error(w, "Ошибка разбора JSON: "+err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	if logger != nil {
+		logger.Printf("Получен документ: %v", doc)
 	}
 
 	var err error
@@ -144,7 +211,27 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	mercSNODefault := -1
 	descrError := ""
 
+	if doc.IsTest {
+		config.KktEmulation = true
+
+		response := map[string]interface{}{
+			"status":    "success",
+			"message":   "Документ получен",
+			"itemCount": len(doc.Items),
+			"fiscNumb":  "123456",
+			"fiscSign":  "987654321",
+			"dateTime":  time.Now().Format("2006-01-02 15:04:05"),
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	sessionkey, descrError, err = merc.CheckStatsuConnectionKKT(config.KktEmulation, config.KktIP, config.KktPort, config.ComPort, "", config.UserMerc, config.PasswUserMerc)
+	if logger != nil {
+		logger.Printf("Проверка статуса подключения к ККТ: %v", descrError)
+	}
 	if err != nil {
 		if !config.KktEmulation {
 			mercSNODefault = 0
@@ -211,15 +298,28 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSettings(w http.ResponseWriter, r *http.Request) {
+	if logger != nil {
+		logger.Printf("Обработка настроек: %s", r.Method)
+	}
+
 	switch r.Method {
 	case http.MethodGet:
+		if logger != nil {
+			logger.Println("Получение текущих настроек")
+		}
 		mu.RLock()
 		json.NewEncoder(w).Encode(config)
 		mu.RUnlock()
 
 	case http.MethodPost:
+		if logger != nil {
+			logger.Println("Обновление настроек")
+		}
 		var newConfig Config
 		if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
+			if logger != nil {
+				logger.Printf("Ошибка декодирования настроек: %v", err)
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -235,7 +335,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Перезапускаем службу
+		// Перезапус��аем службу
 		if service.Interactive() {
 			// Если запущено как приложение, сообщаем о необходимости ручного перезапуска
 			w.WriteHeader(http.StatusOK)
@@ -278,6 +378,9 @@ func runAsApplication() {
 }
 
 func main() {
+	// Инициализируем логгер в начале main
+	//logger.Println("Запуск программы...")
+
 	//if runtime.GOOS == "windows" {
 	//	// Установить совместимость с Windows 7
 	//	os.Setenv("GODEBUG", "netdns=go")
@@ -296,6 +399,11 @@ func main() {
 	if err := loadConfig(); err != nil {
 		log.Printf("Ошибка загрузки конфига: %v", err)
 	}
+
+	//if err := initLogger(); err != nil {
+	//	//log.Fatal("Ошибка инициализации логгера:", err)
+	//	fmt.Println("Ошибка инициализации логгера:", err)
+	//}
 
 	fmt.Println("Создаем службу...")
 	prg := &program{}
