@@ -1,9 +1,10 @@
 package main
 
 import (
+	"cto_ksm_mercury/consttypes"
+	merc "cto_ksm_mercury/sendtcp"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -17,9 +18,15 @@ import (
 
 // Config структура для хранения настроек
 type Config struct {
-	SourcePort int    `json:"sourcePort"`
-	TargetPort int    `json:"targetPort"`
-	TargetHost string `json:"targetHost"`
+	SourcePort               int    `json:"sourcePort"`
+	KktEmulation             bool   `json:"kktEmulation"`
+	KktIP                    string `json:"kktIP"`
+	KktPort                  int    `json:"kktPort"`
+	ComPort                  int    `json:"comPort"`
+	CountAttemptsOfMarkCheck int    `json:"countAttemptsOfMarkCheck"`
+	UserMerc                 int    `json:"userMerc"`
+	PasswUserMerc            string `json:"passwUserMerc"`
+	PauseOfMarksMistake      int    `json:"pauseOfMarksMistake"`
 }
 
 var (
@@ -27,11 +34,11 @@ var (
 	config    Config
 	mu        sync.RWMutex
 	svcConfig = &service.Config{
-		Name:         "cto_ksm_proxyfmu",
-		DisplayName:  "cto_ksm_proxyfmu",
-		Description:  "ЦТО КСМ - прокси-сервис для FMU - разрешительный режим",
-		UserName:     "LocalSystem",                 // Используем LocalSystem для полного доступа
-		Dependencies: []string{"Tcpip", "Dnscache"}, // Добавляем зависимости от сетевых служб
+		Name:         "cto_ksm_mercury",
+		DisplayName:  "cto_ksm_mercury",
+		Description:  "ЦТО КСМ - для ККТ Меркурий",
+		UserName:     "NT AUTHORITY\\NetworkService", // Используем NetworkService для ограниченного доступа
+		Dependencies: []string{"Tcpip", "Dnscache"},
 		Option: service.KeyValue{
 			"StartTimeout": "120",
 		},
@@ -105,11 +112,16 @@ func getConfigPath() string {
 }
 
 func loadConfig() error {
-	// Значения по умолчани
 	config = Config{
-		SourcePort: 2579,
-		TargetPort: 2578,
-		TargetHost: "localhost",
+		SourcePort:               2579,
+		KktEmulation:             false,
+		KktIP:                    "localhost",
+		KktPort:                  7778,
+		ComPort:                  1,
+		CountAttemptsOfMarkCheck: 10,
+		UserMerc:                 0,
+		PasswUserMerc:            "",
+		PauseOfMarksMistake:      10,
 	}
 
 	// Попытка загруить конфиг из файла
@@ -138,41 +150,87 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mu.RLock()
-	targetURL := fmt.Sprintf("http://%s:%d/document", config.TargetHost, config.TargetPort)
-	mu.RUnlock()
-
-	proxyReq, err := http.NewRequest(http.MethodPost, targetURL, r.Body)
-	if err != nil {
-		http.Error(w, "Ошибка при создании запроса", http.StatusInternalServerError)
+	// Читаем тело запроса
+	var doc consttypes.TDocument
+	if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
+		http.Error(w, "Ошибка разбора JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	for name, values := range r.Header {
-		for _, value := range values {
-			proxyReq.Header.Add(name, value)
+	// Логируем полученный документ
+	if logger != nil {
+		logger.Infof("Получен документ с %d позициями", len(doc.Items))
+	}
+
+	var err error
+	sessionkey := ""
+	mercSNODefault := -1
+	descrError := ""
+
+	sessionkey, descrError, err = merc.CheckStatsuConnectionKKT(config.KktEmulation, config.KktIP, config.KktPort, config.ComPort, "", config.UserMerc, config.PasswUserMerc)
+	if err != nil {
+		if !config.KktEmulation {
+			mercSNODefault = 0
+			http.Error(w, "Ошибка подключения к ККТ: "+descrError, http.StatusInternalServerError)
+			return
+		} else {
+			mercSNODefault, err = merc.GetSNOByDefault(config.KktEmulation, config.KktIP, config.KktPort, sessionkey)
+			if err != nil {
+				http.Error(w, "Ошибка получения SNO: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+	} else {
+		mercSNODefault, err = merc.GetSNOByDefault(config.KktEmulation, config.KktIP, config.KktPort, sessionkey)
+		if err != nil {
+			http.Error(w, "Ошибка получения SNO: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
 	}
-	proxyReq.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{}
-	resp, err := client.Do(proxyReq)
+	//проверка марок
+	merc.BreakAndClearProccessOfMarks(config.KktIP, config.KktPort, config.ComPort, sessionkey, config.UserMerc, config.PasswUserMerc)
+	for _, item := range doc.Items {
+		if item.Mark == "" {
+			continue
+		}
+		_, err = merc.RunProcessCheckMark(config.KktEmulation, config.KktIP, config.KktPort, config.CountAttemptsOfMarkCheck, config.PauseOfMarksMistake, sessionkey, item.Mark)
+		if err != nil {
+			http.Error(w, "Ошибка проверки марок: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Здесь будет добавлена логика обработки документа
+	answer, err := merc.PrintCheck(config.KktEmulation, config.KktIP, config.KktPort, config.ComPort, doc, "", mercSNODefault, false, 0, "", false)
 	if err != nil {
-		http.Error(w, "Ошибка при отправке запроса", http.StatusInternalServerError)
+		http.Error(w, "Ошибка печати чека: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
-
-	for name, values := range resp.Header {
-		for _, value := range values {
-			w.Header().Add(name, value)
-		}
+	if sessionkey != "" {
+		merc.Closesession(config.KktIP, config.KktPort, &sessionkey)
 	}
-	w.WriteHeader(resp.StatusCode)
 
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		logger.Error(err)
+	var answerJson consttypes.TAnswerMercur
+	err = json.Unmarshal([]byte(answer), &answerJson)
+	if err != nil {
+		http.Error(w, "Ошибка разбора JSON: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
+
+	// Временный ответ
+	response := map[string]interface{}{
+		"status":    "success",
+		"message":   "Документ получен",
+		"itemCount": len(doc.Items),
+		"fiscNumb":  answerJson.FiscalDocNum,
+		"fiscSign":  answerJson.FiscalSign,
+		//"dateTime": answerJson.
+		"answer": answer,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 func handleSettings(w http.ResponseWriter, r *http.Request) {
