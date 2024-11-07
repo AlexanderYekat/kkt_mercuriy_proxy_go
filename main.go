@@ -10,12 +10,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
-	"time"
 
 	"github.com/kardianos/service"
-	// Добавляем этот импорт
 )
 
 // Config структура для хранения настроек
@@ -32,20 +29,25 @@ type Config struct {
 }
 
 var (
-	logger    service.Logger
 	config    Config
 	mu        sync.RWMutex
 	svcConfig = &service.Config{
-		Name:         "cto_ksm_mercury",
-		DisplayName:  "cto_ksm_mercury",
-		Description:  "ЦТО КСМ - для ККТ Меркурий",
-		UserName:     "NT AUTHORITY\\NetworkService", // Используем NetworkService для ограниченного доступа
-		Dependencies: []string{"Tcpip", "Dnscache"},
+		Name:        "cto_ksm_mercury",
+		DisplayName: "cto_ksm_mercury",
+		Description: "ЦТО КСМ - для ККТ Меркурий",
+		UserName:    "NT AUTHORITY\\LocalService", // Используем LocalService для минимальных прав
+		Dependencies: []string{
+			"Tcpip",    // Сетевой стек
+			"Dnscache", // DNS-кэширование
+			"RpcSs",    // Remote Procedure Call (RPC)
+			"nsi",      // Network Store Interface Service
+			//"EventLog", // Для логирования событий
+		},
 		Option: service.KeyValue{
-			"StartTimeout": "120",
+			"StartTimeout":   "220",
+			"ServiceSIDType": "1", // Ограничиваем SID службы
 		},
 	}
-	fileLogger *log.Logger
 )
 
 type program struct{}
@@ -58,26 +60,15 @@ func (p *program) Start(s service.Service) error {
 		close(stop)
 	}()
 
-	// Логируем успешный запуск
-	if logger != nil {
-		logger.Info("Служба успешно запущена")
-	}
 	return nil
 }
 
 func (p *program) Stop(s service.Service) error {
-	// Логируем остановку
-	if logger != nil {
-		logger.Info("Служба останавливается...")
-	}
 	// Здесь можно добавить cleanup код если необходимо
 	return nil
 }
 
 func (p *program) run() {
-	if logger != nil {
-		logger.Info("Инициализация службы...")
-	}
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", config.SourcePort),
@@ -86,31 +77,17 @@ func (p *program) run() {
 
 	setupRoutes()
 
-	if logger != nil {
-		logger.Infof("Сервер запущен на порту %d", config.SourcePort)
-	}
-
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		if logger != nil {
-			logger.Error(err)
-		}
 	}
 }
 
 // Функция для получения пути к файлу конфигурации
 func getConfigPath() string {
-	// Получаем путь к Application Data
-	appData := os.Getenv("APPDATA")
-	if appData == "" {
-		// Для Windows XP путь может быть другим
-		appData = filepath.Join(os.Getenv("USERPROFILE"), "Application Data")
-	}
-
-	// Создаем директорию для нашего приложения, если её нет
-	appDir := filepath.Join(appData, "CTO_KSM", "ProxyFMU")
+	fmt.Println("Получаем путь к Application Data...")
+	// Используем ProgramData вместо APPDATA
+	programData := os.Getenv("ProgramData")
+	appDir := filepath.Join(programData, "cto_ksm_mercury")
 	os.MkdirAll(appDir, 0755)
-
-	// Возвращаем полный путь к файлу конфигурации
 	return filepath.Join(appDir, "ctoksm_proxyfmu_config.json")
 }
 
@@ -139,15 +116,17 @@ func loadConfig() error {
 	return nil
 }
 
-func saveConfig() error {
+func saveConfig() (string, error) {
+	fmt.Println("Сохраняем конфигурацию...")
 	data, err := json.MarshalIndent(config, "", "    ")
 	if err != nil {
-		return err
+		return "", err
 	}
-	return ioutil.WriteFile(getConfigPath(), data, 0644)
+	return getConfigPath(), ioutil.WriteFile(getConfigPath(), data, 0644)
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Обрабатываем запрос...")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Метод не разрешен", http.StatusMethodNotAllowed)
 		return
@@ -158,11 +137,6 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
 		http.Error(w, "Ошибка разбора JSON: "+err.Error(), http.StatusBadRequest)
 		return
-	}
-
-	// Логируем полученный документ
-	if logger != nil {
-		logger.Infof("Получен документ с %d позициями", len(doc.Items))
 	}
 
 	var err error
@@ -254,7 +228,9 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 		config = newConfig
 		mu.Unlock()
 
-		if err := saveConfig(); err != nil {
+		path, err := saveConfig()
+		w.Write([]byte("Файл настроек записан по пути: " + path))
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -301,86 +277,45 @@ func runAsApplication() {
 	}
 }
 
-func initFileLogger() error {
-	appData := os.Getenv("APPDATA")
-	if appData == "" {
-		appData = filepath.Join(os.Getenv("USERPROFILE"), "Application Data")
-	}
-
-	logDir := filepath.Join(appData, "CTO_KSM", "ProxyFMU", "logs")
-	os.MkdirAll(logDir, 0755)
-
-	currentTime := time.Now().Format("2006-01-02")
-	logPath := filepath.Join(logDir, "service_"+currentTime+".log")
-
-	// Выводим путь к файлу логов
-	fmt.Printf("Путь к файлу логов: %s\n", logPath)
-
-	logFile, err := os.OpenFile(
-		logPath,
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY,
-		0644,
-	)
-	if err != nil {
-		return err
-	}
-
-	fileLogger = log.New(logFile, "", log.LstdFlags)
-	return nil
-}
-
 func main() {
-	fmt.Println("Начинаем инициализацию файла логов...")
-	if err := initFileLogger(); err != nil {
-		fmt.Printf("Ошибка инициализации файла логов: %v\n", err)
-	}
+	//if runtime.GOOS == "windows" {
+	//	// Установить совместимость с Windows 7
+	//	os.Setenv("GODEBUG", "netdns=go")
+	//}
 
-	if runtime.GOOS == "windows" {
-		// Установить совместимость с Windows 7
-		os.Setenv("GODEBUG", "netdns=go")
-	}
+	fmt.Println("Проверяем права администратора...")
+	//if !service.Interactive() {
+	//	isAdmin, err := isUserAdmin()
+	//	if err != nil || !isAdmin {
+	//		log.Fatal("Программа должна быть запущена с правами администратора")
+	//		return
+	//	}
+	//}
 
-	if !service.Interactive() {
-		isAdmin, err := isUserAdmin()
-		if err != nil || !isAdmin {
-			log.Fatal("Программа должна быть запущена с правами администратора")
-			return
-		}
-	}
-
+	fmt.Println("Загружаем конфигурацию...")
 	if err := loadConfig(); err != nil {
 		log.Printf("Ошибка загрузки конфига: %v", err)
 	}
 
+	fmt.Println("Создаем службу...")
 	prg := &program{}
 	s, err := service.New(prg, svcConfig)
 	if err != nil {
 		log.Fatal("Ошибка создания службы: ", err)
 	}
 
-	logger, err = s.Logger(nil)
-	if err != nil {
-		log.Fatal("Ошибка создания логгера: ", err)
-	}
-
-	// Добавляем логирование при запуске
-	logger.Info("Инициализация службы...")
-
+	fmt.Println("Проверяем аргументы командной строки...")
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "install":
 			fmt.Println("Начинаем установку службы...")
-			fileLogger.Println("Начинаем установку службы...")
 			err = s.Install()
 			if err != nil {
 				errMsg := fmt.Sprintf("Ошибка установки службы: %v", err)
 				fmt.Println(errMsg)
-				fileLogger.Println(errMsg)
-				logger.Error(errMsg)
 				log.Fatal(err)
 			}
 			fmt.Println("Служба успешно установлена")
-			fileLogger.Println("Служба успешно установлена")
 			return
 		case "uninstall":
 			err = s.Uninstall()
@@ -391,29 +326,23 @@ func main() {
 			return
 		case "start":
 			fmt.Println("Начинаем запуск службы...")
-			fileLogger.Println("Начинаем запуск службы...")
 			err = s.Start()
 			if err != nil {
 				errMsg := fmt.Sprintf("Ошибка запуска службы: %v", err)
 				fmt.Println(errMsg)
-				fileLogger.Println(errMsg)
 				log.Fatal(err)
 			}
 			fmt.Println("Служба успешно запущена")
-			fileLogger.Println("Служба успешно запущена")
 			return
 		case "stop":
 			fmt.Println("Начинаем остановку службы...")
-			fileLogger.Println("Начинаем остановку службы...")
 			err = s.Stop()
 			if err != nil {
 				errMsg := fmt.Sprintf("Ошибка остановки службы: %v", err)
 				fmt.Println(errMsg)
-				fileLogger.Println(errMsg)
 				log.Fatal(err)
 			}
 			fmt.Println("Служба успешно остановлена")
-			fileLogger.Println("Служба успешно остановлена")
 			return
 		case "run":
 			runAsApplication()
@@ -422,16 +351,14 @@ func main() {
 	}
 
 	err = s.Run()
-	if err != nil {
-		logger.Error(err)
-	}
+	fmt.Println("Служба запущена", err)
 }
 
-func isUserAdmin() (bool, error) {
-	fmt.Println("Проверяем права администратора...")
-	_, err := os.Open("\\\\.\\PHYSICALDRIVE0")
-	if err != nil {
-		return false, err
-	}
-	return true, nil
-}
+//func isUserAdmin() (bool, error) {
+//	fmt.Println("Проверяем права администратора...")
+//	_, err := os.Open("\\\\.\\PHYSICALDRIVE0")
+//	if err != nil {
+//		return false, err
+//	}
+//	return true, nil
+//}

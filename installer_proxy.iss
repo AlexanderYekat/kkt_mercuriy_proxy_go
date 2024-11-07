@@ -1,6 +1,6 @@
 ; Installation script for proxy service
 #define MyAppName "cto_ksm_mercury"
-#define MyAppVersion "6.0"
+#define MyAppVersion "8.0"
 #define MyAppPublisher "CTO KSM"
 #define MyAppExeName "cto_ksm_mercury.exe"
 
