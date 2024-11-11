@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/kardianos/service"
 )
@@ -33,7 +32,6 @@ type Config struct {
 var (
 	config    Config
 	mu        sync.RWMutex
-	logger    *log.Logger
 	svcConfig = &service.Config{
 		Name:        "cto_ksm_mercury",
 		DisplayName: "cto_ksm_mercury",
@@ -53,11 +51,16 @@ var (
 	}
 )
 
+var currentDocument consttypes.TDocument // Глобальная переменная для хранения текущего документа
+
 type program struct{}
 
 func (p *program) Start(s service.Service) error {
 	// Создаем канал для graceful shutdown
 
+	ioutil.WriteFile(getLogPath()+"/service_start2.log", []byte("Служба запущена"), 0644)
+	ioutil.WriteFile(getLogPath()+"/service_start3.log", []byte(getLogPath()), 0644)
+	ioutil.WriteFile(getLogPath()+"/service_start4.log", []byte(getConfigPath()), 0644)
 	if err := initLogger(); err != nil {
 		errMsg := fmt.Sprintf("Ошибка инициализации логгера: %v", err)
 		ioutil.WriteFile(getLogPath()+"/service_start.log", []byte(errMsg), 0644)
@@ -96,7 +99,10 @@ func (p *program) run() {
 func getConfigPath() string {
 	fmt.Println("Получаем путь к Application Data...")
 	// Используем ProgramData вместо APPDATA
-	programData := os.Getenv("ProgramData")
+	//programData := os.Getenv("ProgramData")
+	//userDir, _ := os.UserHomeDir()
+	userDir, _ := os.UserHomeDir()
+	programData := filepath.Join(userDir, "AppData", "Local")
 	appDir := filepath.Join(programData, "cto_ksm_mercury")
 	os.MkdirAll(appDir, 0755)
 	return filepath.Join(appDir, "ctoksm_proxyfmu_config.json")
@@ -108,6 +114,7 @@ func getLogPath() string {
 	// Используем ProgramData вместо APPDATA
 	//programData := os.Getenv("ProgramData")
 	userDir, _ := os.UserHomeDir()
+	ioutil.WriteFile(getConfigPath()+"/service_start.log", []byte("Получаем путь к Application Data..."), 0644)
 	programData := filepath.Join(userDir, "AppData", "Local")
 	appDir := filepath.Join(programData, "cto_ksm_mercury")
 	os.MkdirAll(appDir, 0755)
@@ -120,7 +127,7 @@ func loadConfig() error {
 		SourcePort:               2579,
 		KktEmulation:             false,
 		KktIP:                    "localhost",
-		KktPort:                  7778,
+		KktPort:                  50009,
 		ComPort:                  1,
 		CountAttemptsOfMarkCheck: 10,
 		UserMerc:                 0,
@@ -161,66 +168,72 @@ func initLogger() error {
 		return fmt.Errorf("ошибка открытия файла лога: %v", err)
 	}
 
-	logger = log.New(logFile, "", log.Ldate|log.Ltime|log.Lshortfile)
+	consttypes.Logger = log.New(logFile, "", log.Ldate|log.Ltime|log.Lshortfile)
 	return nil
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
-	if logger != nil {
-		logger.Printf("Получен новый запрос: %s %s", r.Method, r.URL.Path)
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Получен новый запрос: %s %s", r.Method, r.URL.Path)
+	}
+
+	response := consttypes.TDocumentResponse{
+		Success: false,
+		Message: "",
+		Answer:  consttypes.TAnswerMercur{},
 	}
 
 	if r.Method != http.MethodPost {
-		if logger != nil {
-			logger.Printf("Метод не разрешен: %s", r.Method)
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Метод не разрешен: %s", r.Method)
 		}
-		if logger != nil {
-			logger.Printf("Метод не разрешен: %s", r.Method)
-		}
-		http.Error(w, "Метод не разрешен", http.StatusMethodNotAllowed)
+		response.Message = "Метод не разрешен"
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 
 	// Читаем тело запроса
-	var doc consttypes.TDocument
+	var command consttypes.TCommand
 	var bodyBytes []byte
 	bodyBytes, _ = ioutil.ReadAll(r.Body)
-	if logger != nil {
-		logger.Printf("Тело запроса: %s", bodyBytes)
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Тело запроса: %s", bodyBytes)
 	}
 	// Очищаем от специальных символов
 	cleanBody := bytes.Trim(bodyBytes, "\xef\xbb\xbf\x00\x1f") // Удаляем BOM и другие спецсимволы
-	if logger != nil {
-		logger.Printf("Очищенное тело запроса: %s", cleanBody)
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Очищенное тело запроса: %s", cleanBody)
 	}
 
-	if err := json.NewDecoder(bytes.NewReader(cleanBody)).Decode(&doc); err != nil {
-		if logger != nil {
-			logger.Printf("Ошибка разбора JSON: %v", err)
+	if err := json.NewDecoder(bytes.NewReader(cleanBody)).Decode(&command); err != nil {
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Ошибка разбора JSON: %v", err)
 		}
-		http.Error(w, "Ошибка разбора JSON: "+err.Error(), http.StatusBadRequest)
+		response.Message = "Ошибка разбора JSON: " + err.Error()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	if logger != nil {
-		logger.Printf("Получен документ: %v", doc)
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Получен команда: %v", command)
 	}
 
-	var err error
-	sessionkey := ""
+	answer := ""
 	mercSNODefault := -1
-	descrError := ""
+	var errOfCommand error
 
-	if doc.IsTest {
+	if command.Params.IsTest {
 		config.KktEmulation = true
 
-		response := map[string]interface{}{
-			"status":    "success",
-			"message":   "Документ получен",
-			"itemCount": len(doc.Items),
-			"fiscNumb":  "123456",
-			"fiscSign":  "987654321",
-			"dateTime":  time.Now().Format("2006-01-02 15:04:05"),
+		response.Success = true
+		response.Message = "Тестовый режим"
+		response.FiscNumb = "123456"
+		response.FiscSign = "987654321"
+		response.Answer = consttypes.TAnswerMercur{
+			Result:      0,
+			Description: "Тестовый режим",
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -228,69 +241,161 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionkey, descrError, err = merc.CheckStatsuConnectionKKT(config.KktEmulation, config.KktIP, config.KktPort, config.ComPort, "", config.UserMerc, config.PasswUserMerc)
-	if logger != nil {
-		logger.Printf("Проверка статуса подключения к ККТ: %v", descrError)
-	}
-	if err != nil {
-		if !config.KktEmulation {
-			mercSNODefault = 0
-			http.Error(w, "Ошибка подключения к ККТ: "+descrError, http.StatusInternalServerError)
+	switch command.Command {
+	case "OpenCheck":
+		// Открытие чека - инициализация новой структуры документа
+		currentDocument = consttypes.TDocument{
+			IsTest:   command.Params.IsTest,
+			IsReturn: command.Params.IsReturn,
+			Cashier:  command.Params.Cashier,
+			Items:    make([]consttypes.TItem, 0),
+		}
+
+		response.Success = true
+		response.Message = "Чек открыт"
+
+	case "Registration":
+		// Добавление позиции в документ
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Добавляем позицию в документ: %v", command.Params)
+		}
+		item := consttypes.TItem{
+			Name:     command.Params.Name,
+			Price:    command.Params.Price,
+			Quantity: command.Params.Quantity,
+			Mark:     command.Params.Mark,
+		}
+
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Добавляем позицию в документ: %v", item)
+		}
+
+		currentDocument.Items = append(currentDocument.Items, item)
+
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Документ после добавления позиции: %v", currentDocument)
+		}
+
+		response.Success = true
+		response.Message = "Позиция добавлена"
+
+	case "CloseCheck":
+		// Добавляем суммы оплаты
+		currentDocument.Cash = command.Params.Cash
+		currentDocument.Ecash = command.Params.Ecash
+
+		sessionKey := ""
+		sessionKey, _, errOfCommand = merc.CheckStatsuConnectionKKT(config.KktEmulation, config.KktIP, config.KktPort, config.ComPort, "", config.UserMerc, config.PasswUserMerc)
+		if errOfCommand != nil {
+			response.Message = "Ошибка получения статуса чека: " + errOfCommand.Error()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
 			return
-		} else {
-			mercSNODefault, err = merc.GetSNOByDefault(config.KktEmulation, config.KktIP, config.KktPort, sessionkey)
-			if err != nil {
-				http.Error(w, "Ошибка получения SNO: "+err.Error(), http.StatusInternalServerError)
-				return
+		}
+		// Печать чека
+		answer, errOfCommand = merc.PrintCheck(config.KktEmulation, config.KktIP, config.KktPort, config.ComPort, currentDocument, sessionKey, mercSNODefault, false, config.UserMerc, config.PasswUserMerc, false)
+		if errOfCommand != nil {
+			response.Message = "Ошибка печати чека: " + errOfCommand.Error()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		descrErr, errCloseSeesion := merc.Closesession(config.KktIP, config.KktPort, &sessionKey)
+		if errCloseSeesion != nil {
+			response.Message = "Ошибка закрытия сессии: " + descrErr
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		// Очищаем документ после печати
+		currentDocument = consttypes.TDocument{}
+
+	case "OpenShift":
+		// Открытие смены
+		answer, errOfCommand = merc.OpenCloseShift(config.KktEmulation, config.KktIP, config.KktPort, config.ComPort, config.UserMerc, config.PasswUserMerc, config.ComPort, "", true, command.Params.Cashier)
+		if errOfCommand != nil {
+			response.Message = "Ошибка открытия смены: " + errOfCommand.Error()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+	case "CloseShift":
+		// Закрытие смены
+		//sessionkey, descrError, err := merc.CheckStatsuConnectionKKT(config.KktEmulation, config.KktIP, config.KktPort, config.ComPort, "", config.UserMerc, config.PasswUserMerc)
+		//if err != nil {
+		//	response.Message = "Ошибка подключения к ККТ: " + descrError
+		//	w.Header().Set("Content-Type", "application/json")
+		//	json.NewEncoder(w).Encode(response)
+		//	return
+		//}
+		answer, errOfCommand = merc.OpenCloseShift(config.KktEmulation, config.KktIP, config.KktPort, config.ComPort, config.UserMerc, config.PasswUserMerc, config.ComPort, "", false, command.Params.Cashier)
+		if errOfCommand != nil {
+			response.Message = "Ошибка закрытия смены: " + errOfCommand.Error()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+	case "PrintReport":
+		// X-отчет
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Выполняем команду PrintReport")
+		}
+		answer, errOfCommand = merc.PrintReport(config.KktEmulation, config.KktIP, config.KktPort, config.ComPort, config.UserMerc, config.PasswUserMerc, command.Params.ReportCode, "")
+		if errOfCommand != nil {
+			response.Message = "Ошибка печати X-отчета: " + errOfCommand.Error()
+			if consttypes.Logger != nil {
+				consttypes.Logger.Printf("Ошибка печати X-отчета: %v", errOfCommand)
 			}
-		}
-	} else {
-		mercSNODefault, err = merc.GetSNOByDefault(config.KktEmulation, config.KktIP, config.KktPort, sessionkey)
-		if err != nil {
-			http.Error(w, "Ошибка получения SNO: "+err.Error(), http.StatusInternalServerError)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
 			return
 		}
-	}
-
-	//проверка марок
-	merc.BreakAndClearProccessOfMarks(config.KktIP, config.KktPort, config.ComPort, sessionkey, config.UserMerc, config.PasswUserMerc)
-	for _, item := range doc.Items {
-		if item.Mark == "" {
-			continue
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Выполнена команда PrintReport")
+			consttypes.Logger.Printf("Ответ: %s", answer)
 		}
-		_, err = merc.RunProcessCheckMark(config.KktEmulation, config.KktIP, config.KktPort, config.CountAttemptsOfMarkCheck, config.PauseOfMarksMistake, sessionkey, item.Mark)
+		err := json.Unmarshal([]byte(answer), &response.Answer)
 		if err != nil {
-			http.Error(w, "Ошибка проверки марок: "+err.Error(), http.StatusInternalServerError)
+			response.Message = "Ошибка разбора JSON ответа: " + err.Error()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
 			return
 		}
-	}
 
-	// Здесь будет добавлена логика обработки документа
-	answer, err := merc.PrintCheck(config.KktEmulation, config.KktIP, config.KktPort, config.ComPort, doc, "", mercSNODefault, false, 0, "", false)
-	if err != nil {
-		http.Error(w, "Ошибка печати чека: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if sessionkey != "" {
-		merc.Closesession(config.KktIP, config.KktPort, &sessionkey)
-	}
+		if response.Answer.Result != 0 {
+			response.Message = "Ошибка печати X-отчета: " + response.Answer.Description
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
 
-	var answerJson consttypes.TAnswerMercur
-	err = json.Unmarshal([]byte(answer), &answerJson)
-	if err != nil {
-		http.Error(w, "Ошибка разбора JSON: "+err.Error(), http.StatusInternalServerError)
+	default:
+		response.Message = "Неизвестная команда: " + command.Command
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	// Временный ответ
-	response := map[string]interface{}{
-		"status":    "success",
-		"message":   "Документ получен",
-		"itemCount": len(doc.Items),
-		"fiscNumb":  answerJson.FiscalDocNum,
-		"fiscSign":  answerJson.FiscalSign,
-		//"dateTime": answerJson.
-		"answer": answer,
+	// Обработка ответа от ККТ
+	if answer != "" {
+		var answerJson consttypes.TAnswerMercur
+		err := json.Unmarshal([]byte(answer), &answerJson)
+		if err != nil {
+			response.Message = "Ошибка разбора JSON ответа: " + err.Error()
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+		response.Success = true
+		response.Message = "Команда выполнена успешно"
+		response.FiscNumb = fmt.Sprintf("%d", answerJson.FiscalDocNum)
+		response.FiscSign = answerJson.FiscalSign
+		response.ShiftNum = answerJson.ShiftNum
+		response.Answer = answerJson
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -298,27 +403,27 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSettings(w http.ResponseWriter, r *http.Request) {
-	if logger != nil {
-		logger.Printf("Обработка настроек: %s", r.Method)
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Обработка настроек: %s", r.Method)
 	}
 
 	switch r.Method {
 	case http.MethodGet:
-		if logger != nil {
-			logger.Println("Получение текущих настроек")
+		if consttypes.Logger != nil {
+			consttypes.Logger.Println("Получение текущих настроек")
 		}
 		mu.RLock()
 		json.NewEncoder(w).Encode(config)
 		mu.RUnlock()
 
 	case http.MethodPost:
-		if logger != nil {
-			logger.Println("Обновление настроек")
+		if consttypes.Logger != nil {
+			consttypes.Logger.Println("Обновление настроек")
 		}
 		var newConfig Config
 		if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
-			if logger != nil {
-				logger.Printf("Ошибка декодирования настроек: %v", err)
+			if consttypes.Logger != nil {
+				consttypes.Logger.Printf("Ошибка декодирования настроек: %v", err)
 			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -335,7 +440,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Перезапус��аем службу
+		// Перезапускаем службу
 		if service.Interactive() {
 			// Если запущено как приложение, сообщаем о необходимости ручного перезапуска
 			w.WriteHeader(http.StatusOK)

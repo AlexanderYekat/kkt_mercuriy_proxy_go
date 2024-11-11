@@ -11,15 +11,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/mitchellh/mapstructure"
 )
 
 var testnomsessii int
 
+var resMerc consttypes.TAnswerMercur
+
 func GetSNOByDefault(emulation bool, ipktt string, port int, sessionkey string) (int, error) {
-	var resMerc consttypes.TAnswerMercur
 	jsonmerc := []byte(fmt.Sprintf("{\"sessionKey\":\"%v\", \"command\":\"GetRegistrationInfo\"}", sessionkey))
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Отправляем команду получения регистрационной информации")
+	}
 	buffAnsw, err := sendCommandTCPMerc(jsonmerc, ipktt, port)
 	if err != nil {
 		return -1, err
@@ -45,6 +47,112 @@ func GetSNOByDefault(emulation bool, ipktt string, port int, sessionkey string) 
 	return resMerc.RegistrationInfo.TaxSystem[0], nil
 }
 
+func OpenCloseShift(emulation bool, ipktt string, port int, comPort int, userint int, passwuser string, numReport int, sessionkey string, open bool, cashier string) (string, error) {
+	var resMerc consttypes.TAnswerMercur
+	var errorOfPrintReport error
+	textDescription := "открытие"
+	if !open {
+		textDescription = "закрытие"
+	}
+	if sessionkey == "" {
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Отправляем команду %v сессии", textDescription)
+		}
+		answer, err := opensession(ipktt, port, comPort, userint, passwuser)
+		if err != nil {
+			descrError := fmt.Sprintf("ошибка %v сессии к ккт меркурий", textDescription)
+			err = errors.Join(err, errors.New(descrError))
+			return descrError, err
+		}
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Ответ: %s", answer)
+		}
+		err = json.Unmarshal(answer, &resMerc)
+		if err != nil {
+			descrError := fmt.Sprintf("ошибка при разобре ответа при %v сессии покдлючения к ККТ меркурий", textDescription)
+			err = errors.Join(err, errors.New(descrError))
+			return descrError, err
+		}
+		if resMerc.Result != 0 || resMerc.SessionKey == "" {
+			descrError := fmt.Sprintf("ошибка при %v сессии к ккт меркурий", textDescription)
+			err = fmt.Errorf(resMerc.Description)
+			err = errors.Join(err, errors.New(descrError))
+			if !emulation {
+				return descrError, err
+			} else {
+				testnomsessii = testnomsessii + 1
+				resMerc.SessionKey = "эмуляция" + strconv.Itoa(testnomsessii)
+			}
+		}
+		sessionkey = resMerc.SessionKey
+		defer func() {
+			if consttypes.Logger != nil {
+				consttypes.Logger.Printf("Закрываем сессию с ключом: %v", sessionkey)
+			}
+			Closesession(ipktt, port, &sessionkey)
+		}()
+	}
+	commandShift := "OpenShift"
+	if !open {
+		commandShift = "CloseShift"
+	}
+	jsonmerc := []byte(fmt.Sprintf("{\"sessionKey\":\"%v\", \"command\":\"%v\", \"cashierInfo\": { \"cashier\": \"%v\" }}", sessionkey, commandShift, cashier))
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Отправляем команду %v смены: %v", commandShift, string(jsonmerc))
+	}
+	buffAnsw, errorOfPrintReport := sendCommandTCPMerc(jsonmerc, ipktt, port)
+	return string(buffAnsw), errorOfPrintReport
+}
+
+func PrintReport(emulation bool, ipktt string, port int, comPort int, userint int, passwuser string, numReport int, sessionkey string) (string, error) {
+	var resMerc consttypes.TAnswerMercur
+	var errorOfPrintReport error
+	if sessionkey == "" {
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Отправляем команду открытия сессии")
+		}
+		answer, err := opensession(ipktt, port, comPort, userint, passwuser)
+		if err != nil {
+			descrError := "ошибка открытия сессии к ккт меркурий"
+			err = errors.Join(err, errors.New(descrError))
+			return descrError, err
+		}
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Ответ: %s", answer)
+		}
+		err = json.Unmarshal(answer, &resMerc)
+		if err != nil {
+			descrError := "ошибка при разобре ответа при отрытии сессии покдлючения к ККТ меркурий"
+			err = errors.Join(err, errors.New(descrError))
+			return descrError, err
+		}
+		if resMerc.Result != 0 || resMerc.SessionKey == "" {
+			descrError := "ошибка при подключении к ккт меркурий"
+			err = fmt.Errorf(resMerc.Description)
+			err = errors.Join(err, errors.New(descrError))
+			if !emulation {
+				return descrError, err
+			} else {
+				testnomsessii = testnomsessii + 1
+				resMerc.SessionKey = "эмуляция" + strconv.Itoa(testnomsessii)
+			}
+		}
+		sessionkey = resMerc.SessionKey
+		defer func() {
+			if consttypes.Logger != nil {
+				consttypes.Logger.Printf("Закрываем сессию с ключом: %v", sessionkey)
+			}
+			Closesession(ipktt, port, &sessionkey)
+		}()
+	}
+	jsonmerc := []byte(fmt.Sprintf("{\"sessionKey\":\"%v\", \"command\":\"PrintReport\", \"PrintReport\":%v}", sessionkey, numReport))
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Отправляем команду печати отчета: %v", string(jsonmerc))
+	}
+	buffAnsw, errorOfPrintReport := sendCommandTCPMerc(jsonmerc, ipktt, port)
+	return string(buffAnsw), errorOfPrintReport
+}
+
 func RunProcessCheckMark(emulation bool, ipktt string, port int, countAttemptsOfMarkCheck int, pauseOfMarksMistake int, sessionkey string, mark string) (consttypes.TItemInfoCheckResult, error) {
 	var countAttempts int
 	//var imcResultCheckinObj consttypes.TItemInfoCheckResultObject
@@ -64,6 +172,9 @@ func RunProcessCheckMark(emulation bool, ipktt string, port int, countAttemptsOf
 	var err error
 	var resMercAnswerBytes []byte
 	var answerMerc consttypes.TAnswerMercur
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Отправляем команду проверки марки %v", mark)
+	}
 	resMercAnswerBytes, err = SendCheckOfMark(ipktt, port, sessionkey, mark, 0)
 	if err == nil {
 		err = json.Unmarshal(resMercAnswerBytes, &answerMerc)
@@ -75,10 +186,16 @@ func RunProcessCheckMark(emulation bool, ipktt string, port int, countAttemptsOf
 		}
 	}
 	if err != nil {
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("ошибка (%v) запуска проверки марки %v", err, mark)
+		}
 		errorDescr := fmt.Sprintf("ошибка (%v) запуска проверки марки %v", err, mark)
 		return consttypes.TItemInfoCheckResult{}, errors.New(errorDescr)
 	}
 	if !successCommand(resJson) {
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("ошибка (%v) запуска проверки марки %v", resJson, mark)
+		}
 		errorDescr := fmt.Sprintf("ошибка (%v) запуска проверки марки %v", resJson, mark)
 		return consttypes.TItemInfoCheckResult{}, errors.New(errorDescr)
 	}
@@ -100,13 +217,18 @@ func RunProcessCheckMark(emulation bool, ipktt string, port int, countAttemptsOf
 			}
 		}
 		if err != nil {
+			if consttypes.Logger != nil {
+				consttypes.Logger.Printf("ошибка (%v) получения статуса проверки марки %v", err, mark)
+			}
 			errorDescr := fmt.Sprintf("ошибка (%v) получения статуса проверки марки %v", err, mark)
 			return consttypes.TItemInfoCheckResult{}, errors.New(errorDescr)
 		}
 		if !successCommand(resJson) {
 			//делаем паузу
 			desrAction := fmt.Sprintf("пауза в %v секунд... так сервер провекри марок не успевает.", pauseOfMarksMistake)
-			fmt.Println(desrAction)
+			if consttypes.Logger != nil {
+				consttypes.Logger.Println(desrAction)
+			}
 			duration := time.Second * time.Duration(pauseOfMarksMistake)
 			time.Sleep(duration)
 			//if strings.Contains(resJson, "421")
@@ -126,6 +248,9 @@ func RunProcessCheckMark(emulation bool, ipktt string, port int, countAttemptsOf
 		time.Sleep(duration)
 	}
 	if countAttempts == countAttemptsOfMarkCheck {
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("ошибка проверки марки %v", mark)
+		}
 		errorDescr := fmt.Sprintf("ошибка проверки марки %v", mark)
 		return consttypes.TItemInfoCheckResult{}, errors.New(errorDescr)
 	}
@@ -143,14 +268,22 @@ func RunProcessCheckMark(emulation bool, ipktt string, port int, countAttemptsOf
 		}
 	}
 	if err != nil {
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("ошибка (%v) принятия марки %v", err, mark)
+		}
 		errorDescr := fmt.Sprintf("ошибка (%v) принятия марки %v", err, mark)
 		return consttypes.TItemInfoCheckResult{}, errors.New(errorDescr)
 	}
 	if !successCommand(resOfChecking) {
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("ошибка (%v) принятия марки %v", resOfChecking, mark)
+		}
 		errorDescr := fmt.Sprintf("ошибка (%v) принятия марки %v", resOfChecking, mark)
 		return consttypes.TItemInfoCheckResult{}, errors.New(errorDescr)
 	}
-	fmt.Println("конец процедуры runProcessCheckMark без ошибки")
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("конец процедуры runProcessCheckMark без ошибки")
+	}
 	return imcResultCheckin, nil
 } //runProcessCheckMark
 
@@ -160,6 +293,9 @@ func PrintCheck(emulation bool, ipktt string, port int, comport int, checkdoc co
 	var answerclosecheck []byte
 	var errclosecheck, errOfOpenCheck error
 	if sessionkey == "" {
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Отправляем команду открытия сессии")
+		}
 		answer, err := opensession(ipktt, port, comport, userint, passwuser)
 		if err != nil {
 			descrError := "ошибка открытия сессии к ккт меркурий"
@@ -183,9 +319,25 @@ func PrintCheck(emulation bool, ipktt string, port int, comport int, checkdoc co
 				resMerc.SessionKey = "эмуляция" + strconv.Itoa(testnomsessii)
 			}
 		}
-		sessionkey := resMerc.SessionKey
-		defer Closesession(ipktt, port, &sessionkey)
+		sessionkey = resMerc.SessionKey
+		defer func() {
+			if consttypes.Logger != nil {
+				consttypes.Logger.Printf("Закрываем сессию с ключом: %v", sessionkey)
+			}
+			Closesession(ipktt, port, &sessionkey)
+		}()
 	}
+
+	if snoDefault == -1 {
+		var err error
+		snoDefault, err = GetSNOByDefault(emulation, ipktt, port, sessionkey)
+		if err != nil {
+			descrError := "ошибка получения системы налогообложения смены по умолчанию"
+			err = errors.Join(err, errors.New(descrError))
+			return descrError, err
+		}
+	}
+
 	checheaderkmerc, err := convertDocToMercHeader(checkdoc, snoDefault)
 	checheaderkmerc.SessionKey = sessionkey
 	if err != nil {
@@ -211,24 +363,48 @@ func PrintCheck(emulation bool, ipktt string, port int, comport int, checkdoc co
 		err = errors.Join(err, errors.New(descrError))
 		return descrError, err
 	}
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("resMerc.Result1: %v", resMerc.Result)
+	}
 	if resMerc.Result != 0 { //если не получилось открыть чек, отменяем его и пробуем отрыть заново
 		descrError := fmt.Sprintf("ошибка (%v) открытия чека для кассы меркурий (попытка 1)", resMerc.Description)
 		errOfOpenCheck = errors.New(descrError)
 		answerCancel, errCancel := cancelcheck(ipktt, port, &sessionkey) //отменяем предыдущий чек
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("Ответ на команду cancelcheck: %v", string(answerCancel))
+		}
 		if errCancel != nil {
+			if consttypes.Logger != nil {
+				consttypes.Logger.Printf("ошибка (%v) отмены1 чека для кассы меркурий", errCancel)
+			}
 			errOfOpenCheck = errors.Join(errOfOpenCheck, errCancel)
 		} else {
 			errUnMarshCancel := json.Unmarshal(answerCancel, &resMercCancel)
 			if errUnMarshCancel != nil {
+				if consttypes.Logger != nil {
+					consttypes.Logger.Printf("ошибка (%v) разбора ответа отмены2 чека для кассы меркурий", errUnMarshCancel)
+				}
 				errOfOpenCheck = errors.Join(errOfOpenCheck, errUnMarshCancel)
 			} else {
 				if resMercCancel.Result != 0 {
+					if consttypes.Logger != nil {
+						consttypes.Logger.Printf("ошибка (%v) отмены3 чека для кассы меркурий", resMercCancel.Description)
+					}
 					descrError := fmt.Sprintf("ошибка (%v) отмены чека для кассы меркурий", resMercCancel.Description)
 					errOfOpenCheck = errors.Join(errOfOpenCheck, errors.New(descrError))
 				} else {
+					if consttypes.Logger != nil {
+						consttypes.Logger.Printf("Открываем чек заново")
+					}
 					answer, err = opencheck(ipktt, port, headercheckmerc) //открываем заново чек
-					if err != nil {
+					if consttypes.Logger != nil {
+						consttypes.Logger.Printf("Ответ на команду opencheck2: %v", string(answer))
+					}
+					if err == nil {
 						err = json.Unmarshal(answer, &resMerc) //разбираем ответ
+						if consttypes.Logger != nil {
+							consttypes.Logger.Printf("результат открытия чека: %v", resMerc.Result)
+						}
 						if err != nil {
 							fmt.Printf("ошибка (%v) разбора ответа отмены чека\n", err)
 						}
@@ -237,19 +413,44 @@ func PrintCheck(emulation bool, ipktt string, port int, comport int, checkdoc co
 			}
 		}
 	}
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Ответ на команду opencheck3: %v", string(answer))
+	}
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("resMerc.Result2: %v", resMerc.Result)
+	}
 	if resMerc.Result != 0 { //если не получилось открыть чек
+		if consttypes.Logger != nil {
+			consttypes.Logger.Printf("ошибка (%v) открытия чека для кассы меркурий", resMerc.Description)
+		}
 		descrError := fmt.Sprintf("ошибка (%v) открытия чека для кассы меркурий", resMerc.Description)
 		err = errors.Join(errOfOpenCheck, errors.New(descrError))
 		if !emulation {
 			return descrError, err
 		}
 	}
+
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Всего позиций: %v", len(checkdoc.Items))
+	}
+
+	//проверка марок
 	for _, pos := range checkdoc.Items {
-		var currPosType consttypes.TGenearaPosAndTag11921191
-		mapstructure.Decode(pos, &currPosType)
-		if currPosType.Type != "position" {
+		if pos.Mark == "" {
 			continue
 		}
+		_, err := RunProcessCheckMark(emulation, ipktt, port, 10, 10, sessionkey, pos.Mark)
+		if err != nil {
+			descrError := fmt.Sprintf("ошибка (%v) проверки марки %v", err, pos.Mark)
+			err = errors.Join(err, errors.New(descrError))
+			if consttypes.Logger != nil {
+				consttypes.Logger.Println(descrError)
+			}
+			return descrError, err
+		}
+	}
+
+	for _, pos := range checkdoc.Items {
 		//var currPos consttypes.TPosition
 		//mapstructure.Decode(pos, &currPos)
 		mercPos, err := convertDocPosToMercPos(pos, checkdoc.IsReturn)
@@ -378,6 +579,13 @@ func CheckStatsuConnectionKKT(emulation bool, ipktt string, port int, comport in
 		descrError := fmt.Sprintf("ошибка распаковки ответа %v ккт меркурий", string(answerbyteKKT))
 		Closesession(ipktt, port, &sessionkey)
 		return "", descrError, errUnmarshKKT
+	}
+	if !resMerc.ShiftInfo.IsOpen {
+		descrError := "смена не открыта"
+		if consttypes.Logger != nil {
+			consttypes.Logger.Println(descrError)
+		}
+		//return "", descrError, nil
 	}
 	if resMerc.Result != 0 {
 		descrError := fmt.Sprintf("ккт меркурий не работает по причине %v", resMerc.Description)
@@ -577,7 +785,8 @@ func convertDocPosToMercPos(pos consttypes.TItem, returnDoc bool) (consttypes.TM
 	var mercPos consttypes.TMercPosition
 	mercPos.Command = "AddGoods"
 	mercPos.ProductName = pos.Name
-	mercPos.Qty = int(pos.Quantity * 10000)
+	//mercPos.Qty = int(pos.Quantity * 10000)
+	mercPos.Qty = pos.Quantity
 	mercPos.MeasureUnit = 0
 	mercPos.TaxCode = 6
 	mercPos.PaymentFormCode = 4
@@ -585,7 +794,8 @@ func convertDocPosToMercPos(pos consttypes.TItem, returnDoc bool) (consttypes.TM
 	if pos.Mark != "" {
 		mercPos.ProductTypeCode = 33
 	}
-	mercPos.Price = int(pos.Price * 100)
+	//mercPos.Price = int(pos.Price * 100)
+	mercPos.Price = pos.Price
 	if pos.Mark != "" {
 		mercPos.McInfo = new(consttypes.TMcInfoMerc)
 		mercPos.McInfo.Mc = pos.Mark
@@ -671,6 +881,10 @@ func opensession(ipktt string, port int, comport int, userint int, passwuser str
 		jsonmerc = []byte(fmt.Sprintf("{\"sessionKey\":null, \"command\":\"OpenSession\", \"portName\":\"COM%v\", \"model\":\"185F\", \"debug\": true, \"logPath\": \"c:\\\\logs\\\\\"}", comport))
 	}
 
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Отправляем команду OpenSession: %v", string(jsonmerc))
+	}
+
 	buffAnsw, err := sendCommandTCPMerc(jsonmerc, ipktt, port)
 	if err != nil {
 		descError := fmt.Sprintf("ошибка (%v) открытия сессии для кассы меркурий", err)
@@ -681,6 +895,9 @@ func opensession(ipktt string, port int, comport int, userint int, passwuser str
 } //opensession
 
 func opencheck(ipktt string, port int, headercheckjson []byte) ([]byte, error) {
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Отправляем команду opencheck: %v", string(headercheckjson))
+	}
 	buffAnsw, err := sendCommandTCPMerc(headercheckjson, ipktt, port)
 	if err != nil {
 		descError := fmt.Sprintf("ошибка (%v) открытия чека для кассы меркурий", err)
@@ -711,10 +928,19 @@ func closecheck(ipktt string, port int, forclosedatamerc []byte) ([]byte, error)
 } //closecheck
 
 func cancelcheck(ipktt string, port int, sessionkey *string) ([]byte, error) {
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Отправляем команду ResetCheck: %v", *sessionkey)
+	}
 	jsonmerc := []byte(fmt.Sprintf("{\"sessionKey\":\"%v\", \"command\":\"ResetCheck\"}", *sessionkey))
 	buffAnsw, err := sendCommandTCPMerc(jsonmerc, ipktt, port)
+	if consttypes.Logger != nil {
+		consttypes.Logger.Printf("Ответ на команду ResetCheck: %v", string(buffAnsw))
+	}
 	if err != nil {
 		descError := fmt.Sprintf("ошибка (%v) отмены чека для кассы меркурий", err)
+		if consttypes.Logger != nil {
+			consttypes.Logger.Println(descError)
+		}
 		fmt.Println(descError)
 		return buffAnsw, err
 	}

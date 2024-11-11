@@ -1,23 +1,54 @@
 package consttypes
 
-import "os"
+import (
+	"log"
+	"os"
+)
+
+var Logger *log.Logger
 
 // Структуры для работы с документом
 type TItem struct {
-	Name     string  `json:"name"`     // Наименование товара
-	Price    float64 `json:"price"`    // Цена
-	Quantity float64 `json:"quantity"` // Количество
-	Mark     string  `json:"mark"`     // Марка (если есть)
+	Name     string `json:"name"`           // Наименование товара
+	Price    int    `json:"price"`          // Цена*100
+	Quantity int    `json:"quantity"`       // Количество*10000
+	Mark     string `json:"mark,omitempty"` // Марка (если есть)
 }
 
 type TDocument struct {
 	IsTest       bool    `json:"isTest,omitempty"`
 	IsReturn     bool    `json:"isReturn,omitempty"`
 	Items        []TItem `json:"items"` // Позиции документа
-	TaxationType string  `json:"taxationType"`
-	Cashier      string  `json:"cashier"`
-	Cash         float64 `json:"cash"`
-	Ecash        float64 `json:"ecash"`
+	TaxationType string  `json:"taxationType,omitempty"`
+	Cashier      string  `json:"cashier,omitempty"`
+	Cash         int     `json:"cash,omitempty"`  // Сумма наличными*100
+	Ecash        int     `json:"ecash,omitempty"` // Сумма электронными деньгами*100
+}
+
+type TParamsCommand struct {
+	IsReturn   bool   `json:"isReturn,omitempty"`
+	IsTest     bool   `json:"isTest,omitempty"`
+	ReportCode int    `json:"reportCode,omitempty"`
+	Cashier    string `json:"cashier,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Quantity   int    `json:"quantity,omitempty"`
+	Price      int    `json:"price,omitempty"`
+	Mark       string `json:"mark,omitempty"`
+	Cash       int    `json:"cash,omitempty"`
+	Ecash      int    `json:"ecash,omitempty"`
+}
+type TCommand struct {
+	Command string         `json:"operation"`
+	Params  TParamsCommand `json:"params,omitempty"`
+}
+
+type TDocumentResponse struct {
+	Success  bool          `json:"success"`
+	Message  string        `json:"message"`
+	FiscNumb string        `json:"fiscNumb"`
+	FiscSign string        `json:"fiscSign"`
+	ShiftNum int           `json:"shiftNum"`
+	Answer   TAnswerMercur `json:"answer"`
 }
 
 type TShiftInfoMerc struct {
@@ -86,12 +117,12 @@ type TMercOpenCheck struct {
 	Command         string              `json:"command"`
 	CheckType       int                 `json:"checkType"`
 	TaxSystem       int                 `json:"taxSystem"`
-	PrintDoc        bool                `json:"printDoc"`
-	AdditionalProps string              `json:"additionalProps"`
+	PrintDoc        bool                `json:"printDoc,omitempty"`
+	AdditionalProps string              `json:"additionalProps,omitempty"`
 	CashierInfo     TCashierInfoMerc    `json:"cashierInfo"`
 	BuyerInfo       *TBuyerInfoMerc     `json:"buyerInfo,omitempty"`
-	CorrectionInfo  TCorrectionInfoMerc `json:"correctionInfo"`
-	UserAttribute   TUserAttribute      `json:"userAttribute"`
+	CorrectionInfo  TCorrectionInfoMerc `json:"correctionInfo,omitempty"`
+	UserAttribute   TUserAttribute      `json:"userAttribute,omitempty"`
 }
 
 type TPartMerc struct {
